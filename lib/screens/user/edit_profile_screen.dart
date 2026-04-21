@@ -109,24 +109,51 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> save() async {
-    // 1. Keyboard band karne ke liye
     FocusScope.of(context).unfocus();
 
-    // 2. 🔥 Space Check & Trim Logic (Dost wala logic)
-    // .trim() aage-piche ki space hatayega
-    // .replaceAll(" ", "_") beech ki spaces ko underscore se badal dega
-    String cleanUsername = nameCtrl.text.trim().replaceAll(" ", "_");
+    String nameText = nameCtrl.text.trim();
+    String emailText = emailCtrl.text.trim().toLowerCase(); // Email hamesha lowercase mein
+    String phoneText = phoneCtrl.text.trim();
 
-    // 3. Loading chalu karein (Ensure karein aapne 'bool isSaving = false;' declare kiya ho)
+    // ================== VALIDATION LOGIC ==================
+    if (nameText.isEmpty) {
+      _showError("Please enter your name");
+      return;
+    }
+
+    // 🔥 NEW EMAIL VALIDATION
+    if (emailText.isEmpty) {
+      _showError("Please enter email");
+      return;
+    }
+
+    // Aapka Regex Pattern
+    String emailPattern = r"^[a-zA-Z0-9.]+@(gmail|yahoo|outlook|vastrafix|hotmail)\.(com|in|net|org|co\.in)$";
+    RegExp regExp = RegExp(emailPattern);
+
+    if (!regExp.hasMatch(emailText)) {
+      _showError("Please enter a valid email (e.g. name@gmail.com)");
+      return;
+    }
+
+    if (phoneText.isEmpty) {
+      _showError("Please enter your phone number");
+      return;
+    }
+    if (phoneText.length != 10) {
+      _showError("Phone number must be exactly 10 digits");
+      return;
+    }
+    // ======================================================
+
+    String cleanUsername = nameText.replaceAll(" ", "_");
     setState(() => isSaving = true);
 
     try {
-      print("Sending Clean Username: $cleanUsername");
-
       final success = await ApiService.updateProfile(
-        username: cleanUsername, // 🔥 Ab space nahi jayega, underscore jayega
-        email: emailCtrl.text.trim(),
-        phone: phoneCtrl.text.trim(),
+        username: cleanUsername,
+        email: emailText,
+        phone: phoneText,
         image: image,
       );
 
@@ -134,36 +161,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       if (success) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Profile updated successfully! ✅"),
-            backgroundColor: AppTheme.freshGreen, // Aapka theme color
-          ),
+          const SnackBar(content: Text("Profile updated successfully! ✅"), backgroundColor: AppTheme.freshGreen),
         );
-        // Data update hone ke baad screen back karein
         Navigator.pop(context, true);
       } else {
-        // Agar backend se 'false' aaye
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Update failed: Username might be taken or invalid"),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _showError("Update failed: Username might be taken or invalid");
       }
     } catch (e) {
-      print("🔥 SAVE ERROR: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Error: Use letters, numbers or underscore only"),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      if (mounted) _showError("Error: Use letters, numbers or underscore only");
     } finally {
-      // 4. Loading band karein
       if (mounted) setState(() => isSaving = false);
     }
+  }
+
+  // Error dikhane ke liye ek chhota sa helper function
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating, // Thoda design achha karne ke liye
+      ),
+    );
   }
 
   // 🔹 UI from File 2: Branded Profile Image Stack
@@ -221,7 +240,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   // 🔹 UI from File 2: Branded Input Fields
-  Widget _buildTextField(String label, IconData icon, TextEditingController controller, bool isDark) {
+  Widget _buildTextField(String label, IconData icon, TextEditingController controller, bool isDark,{TextInputType type = TextInputType.text, int? maxLength}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -229,11 +248,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         const SizedBox(height: 8),
         TextField(
           controller: controller,
+          keyboardType: type, // <--- NAYA: Number ya Text keyboard ke liye
+          maxLength: maxLength, // <--- NAYA: 10 digit limit ke liye
           style: TextStyle(
               color: isDark ? Colors.white : AppTheme.navyDark,
               fontWeight: FontWeight.bold
           ),
           decoration: InputDecoration(
+            counterText: "", // <--- NAYA: Niche 0/10 likha na aaye uske liye
             prefixIcon: Icon(icon, color: AppTheme.primaryBlue, size: 22),
             filled: true,
             fillColor: isDark ? Colors.white.withOpacity(0.05) : AppTheme.scaffoldBg,
@@ -283,9 +305,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
             _buildTextField("Full Name", Icons.person_outline_rounded, nameCtrl, isDark),
             const SizedBox(height: 20),
-            _buildTextField("Email Address", Icons.email_outlined, emailCtrl, isDark),
+            _buildTextField("Email Address", Icons.email_outlined, emailCtrl, isDark, type: TextInputType.emailAddress),
             const SizedBox(height: 20),
-            _buildTextField("Phone Number", Icons.phone_android_rounded, phoneCtrl, isDark),
+            _buildTextField("Phone Number", Icons.phone_android_rounded, phoneCtrl, isDark, maxLength: 10),
 
             const SizedBox(height: 50),
 

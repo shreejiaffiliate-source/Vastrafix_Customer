@@ -33,21 +33,32 @@ class _SignupScreenState extends State<SignupScreen> {
 
   void handleSignup() async {
     String username = usernameController.text.trim();
-    String email = emailController.text.trim();
+    String email = emailController.text.trim().toLowerCase();
     String phone = phoneController.text.trim();
     String password = passwordController.text.trim();
     String formattedUsername = username.replaceAll(' ', '_').toLowerCase();
 
+    // 1. Empty Field Check
     if (username.isEmpty || email.isEmpty || phone.isEmpty || password.isEmpty) {
       _showMessage("Please fill all fields");
       return;
     }
 
-    if (!email.contains("@") || !email.contains(".")) {
-      _showMessage("Enter valid email address");
+    // 2. Strict Email Validation (Wahi Regex jo pehle banaya tha)
+    String emailPattern = r"^[a-zA-Z0-9.]+@(gmail|yahoo|outlook|vastrafix|hotmail)\.(com|in|net|org|co\.in)$";
+    RegExp regExp = RegExp(emailPattern);
+    if (!regExp.hasMatch(email)) {
+      _showMessage("Enter a valid email (e.g. name@gmail.com)");
       return;
     }
 
+    // 3. Phone Number Validation (Exactly 10 digits)
+    if (phone.length != 10) {
+      _showMessage("Phone number must be exactly 10 digits");
+      return;
+    }
+
+    // 4. Password Length Check
     if (password.length < 6) {
       _showMessage("Password must be at least 6 characters");
       return;
@@ -66,23 +77,33 @@ class _SignupScreenState extends State<SignupScreen> {
 
       setState(() => isLoading = false);
 
-      if (result.containsKey('email') || result.containsKey('id')) {
+      // 🔥 CHECK LOGIC: Django aksar error mein email ya phone key bhejta hai
+      if (result.containsKey('id') || result.containsKey('message')) {
         _showMessage("Registration successful! Verify your email.", isError: false);
-
         if (mounted) {
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (_) => EmailOTPVerificationScreen(email: email),
-            ),
+            MaterialPageRoute(builder: (_) => EmailOTPVerificationScreen(email: email)),
           );
         }
-      } else {
-        _showMessage(result.toString());
+      }
+      // 🚨 AGAR EMAIL ALREADY HAI: Django bhejega {"email": ["user with this email already exists."]}
+      else if (result.containsKey('email')) {
+        _showMessage("This email is already registered. Please login.");
+      }
+      else if (result.containsKey('username')) {
+        _showMessage("Username already taken. Try another.");
+      }
+      else if (result.containsKey('phone')) {
+        _showMessage("Phone number already in use.");
+      }
+      else {
+        // Backup error message
+        _showMessage(result['error'] ?? "Registration failed. Please try again.");
       }
     } catch (e) {
       setState(() => isLoading = false);
-      _showMessage("Failed to connect to server");
+      _showMessage("Server Connection Error");
     }
   }
 
@@ -237,14 +258,19 @@ class _SignupScreenState extends State<SignupScreen> {
       TextEditingController controller,
       String hint,
       IconData icon,
-      {bool isPassword = false, TextInputType keyboardType = TextInputType.text, required bool isDark} // 🔥 NAYA: isDark required
+      {bool isPassword = false,
+        TextInputType keyboardType = TextInputType.text,
+        required bool isDark}
       ) {
     return TextField(
       controller: controller,
       obscureText: isPassword ? !_isPasswordVisible : false,
       keyboardType: keyboardType,
-      style: TextStyle(color: isDark ? Colors.white : AppTheme.navyDark, fontWeight: FontWeight.w600), // 🔥 FIX 6
+      // 🔥 NAYA: Phone number ke liye 10 digit limit
+      maxLength: keyboardType == TextInputType.phone ? 10 : null,
+      style: TextStyle(color: isDark ? Colors.white : AppTheme.navyDark, fontWeight: FontWeight.w600),
       decoration: InputDecoration(
+        counterText: "", // Taaki niche 0/10 na dikhe
         hintText: hint,
         hintStyle: const TextStyle(color: AppTheme.greyText, fontWeight: FontWeight.normal),
         prefixIcon: Icon(icon, color: AppTheme.primaryBlue, size: 22),

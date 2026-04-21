@@ -37,8 +37,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   File? _selectedImage; // Isme photo store hogi
   final ImagePicker _picker = ImagePicker();
 
-  Future<void> _pickImage() async {
-    final XFile? photo = await _picker.pickImage(source: ImageSource.gallery);
+  // 🔥 NAYA: Ab yeh function Camera aur Gallery dono ke liye kaam karega
+  Future<void> _pickImage(ImageSource source) async {
+    final XFile? photo = await _picker.pickImage(source: source);
     if (photo != null) {
       setState(() => _selectedImage = File(photo.path));
     }
@@ -209,9 +210,41 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: isDark ? Colors.white70 : AppTheme.navyDark)),
                 const SizedBox(height: 8),
                 GestureDetector(
-                  onTap: () async {
-                    await _pickImage(); // Photo select karo
-                    setModalState(() {}); // Modal ki state refresh karo
+                  onTap: () {
+                    // 🔥 NAYA: Click karte hi ek chhota menu khulega (Camera ya Gallery)
+                    showModalBottomSheet(
+                        context: context,
+                        backgroundColor: isDark ? AppTheme.navyDark : Colors.white,
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                        ),
+                        builder: (BuildContext bc) {
+                          return SafeArea(
+                            child: Wrap(
+                              children: <Widget>[
+                                ListTile(
+                                  leading: const Icon(Icons.photo_camera, color: AppTheme.primaryBlue),
+                                  title: Text('Take a Photo', style: TextStyle(color: isDark ? Colors.white : AppTheme.navyDark, fontWeight: FontWeight.w500)),
+                                  onTap: () async {
+                                    Navigator.of(context).pop(); // Menu band karo
+                                    await _pickImage(ImageSource.camera); // 📸 Camera open karo
+                                    setModalState(() {}); // UI update karo
+                                  },
+                                ),
+                                ListTile(
+                                  leading: const Icon(Icons.photo_library, color: AppTheme.primaryBlue),
+                                  title: Text('Choose from Gallery', style: TextStyle(color: isDark ? Colors.white : AppTheme.navyDark, fontWeight: FontWeight.w500)),
+                                  onTap: () async {
+                                    Navigator.of(context).pop(); // Menu band karo
+                                    await _pickImage(ImageSource.gallery); // 🖼️ Gallery open karo
+                                    setModalState(() {}); // UI update karo
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                    );
                   },
                   child: Container(
                     height: 120,
@@ -230,7 +263,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       children: [
                         Icon(Icons.add_a_photo_outlined, color: AppTheme.primaryBlue, size: 30),
                         SizedBox(height: 8),
-                        Text("Tap to upload photo of damage", style: TextStyle(color: Colors.grey, fontSize: 12)),
+                        Text("Tap to upload or take photo", style: TextStyle(color: Colors.grey, fontSize: 12)),
                       ],
                     )
                         : Stack(

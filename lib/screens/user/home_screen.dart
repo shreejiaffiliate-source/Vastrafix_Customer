@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'package:flutter/services.dart';
+import 'package:connectivity_plus/connectivity_plus.dart'; // 👈 NAYA PACKAGE
+import '../../core/navigation_service.dart'; // 👈 File ke top par import karein
+import 'package:firebase_messaging/firebase_messaging.dart';
 // Internal Project Imports
 import '../../core/api_services.dart';
 import '../../models/category_model.dart';
 import '../../models/banner_model.dart';
+import '../auth/login_screen.dart';
 import '../category/steam_iron_screen.dart';
 import '../orders/order_view_screen.dart';
 import 'support_screen.dart';
@@ -13,6 +17,7 @@ import 'profile_screen.dart';
 import '../../core/theme.dart';
 import '../../core/constants.dart';
 import 'notifications_screen.dart';
+import '../auth/custom_error_screen.dart'; // 👈 ISKO APNE FOLDER KE HISAB SE SET KAREIN
 
 class UserHomeScreen extends StatefulWidget {
   const UserHomeScreen({super.key});
@@ -40,33 +45,148 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
   String selectedCategory = "All";
   String _searchQuery = "";
 
+  // 👈 NAYA: Internet Connection Variables
+  late StreamSubscription<List<ConnectivityResult>> _connectivitySubscription;
+  bool _isShowingNoInternetScreen = false;
+  bool _isShowingServerErrorScreen = false; // 👈 NAYA VARIABLE
+
   @override
   void initState() {
     super.initState();
-    futureCategories = ApiService.getAllCategories();
-    futureBanners = ApiService.getBanners();
+    _initConnectivityListener();
+    _fetchInitialData();
+
     _pageController = PageController(viewportFraction: 1.0);
-    loadUserName();
-    loadProfile();
-    loadNotificationCount();
     selectedCategory = "All";
-    // Har 10 second mein notification count update hoga
+
     notificationTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
       loadNotificationCount();
     });
+
+    // 🔥 NAYA: App start hote hi check karo kya jeb mein koi ID padi hai?
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkPendingNavigation();
+    });
+  }
+
+  // 🔥 NAYA FUNCTION
+  void _checkPendingNavigation() {
+    // Agar koi pending order ID hai jo main.dart ne save ki thi
+    if (pendingOrderIdToNavigate != null) {
+      String orderIdToOpen = pendingOrderIdToNavigate!;
+      pendingOrderIdToNavigate = null; // Ek baar use karke delete kar do taaki baar-baar na khule
+
+      print("🔥 HOME SCREEN: Pending ID mili -> $orderIdToOpen. Navigating...");
+
+      // 500ms ka chhota wait taaki screen theek se load ho jaye
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          Navigator.pushNamed(context, '/order_detail', arguments: orderIdToOpen);
+        }
+      });
+    }
+  }
+
+  void _fetchInitialData() async {
+    try {
+      setState(() {
+        futureCategories = ApiService.getAllCategories();
+        futureBanners = ApiService.getBanners();
+      });
+
+      // 👈 NAYA: Yahan hum API ka wait kar rahe hain error check karne ke liye
+      await futureCategories;
+      await futureBanners;
+
+      loadUserName();
+      loadProfile();
+      loadNotificationCount();
+
+    } catch (e) {
+      print("Server is Down: $e");
+
+      // Agar internet chalu hai, par data nahi aaya, matlab Server Down hai!
+      if (!_isShowingNoInternetScreen && !_isShowingServerErrorScreen) {
+        _isShowingServerErrorScreen = true;
+        _showServerErrorScreen(); // Server wali screen dikhao
+      }
+    }
+  }
+
+  // 👈 NAYA: Internet Listener Logic
+  void _initConnectivityListener() {
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
+      bool hasInternet = !results.contains(ConnectivityResult.none);
+
+      if (!hasInternet && !_isShowingNoInternetScreen) {
+        _isShowingNoInternetScreen = true;
+        _showNoInternetScreen();
+      } else if (hasInternet && _isShowingNoInternetScreen) {
+        _isShowingNoInternetScreen = false;
+        Navigator.of(context, rootNavigator: true).pop(); // Error screen hatao
+        _fetchInitialData(); // Data wapas load karo
+      }
+    });
+  }
+
+  void _showNoInternetScreen() {
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        builder: (context) => CustomErrorScreen(
+          errorIcon: Icons.wifi_off_rounded, // 👈 Yahan Icon set kar diya
+          title: 'OOPS!\nNO INTERNET',
+          subtitle: "Clothes can't be washed without water, and Vastrafix can't work without internet! Please check your connection.",
+          onTryAgain: () async {
+            var results = await Connectivity().checkConnectivity();
+            if (!results.contains(ConnectivityResult.none)) {
+              _isShowingNoInternetScreen = false;
+              if(context.mounted) Navigator.pop(context);
+              _fetchInitialData();
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  void _showServerErrorScreen() {
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        builder: (context) => CustomErrorScreen(
+          errorIcon: Icons.dns_outlined, // 👈 Server ka Icon (Cloud ya DNS)
+          title: 'OOPS!\nSERVER DOWN',
+          subtitle: 'Our servers are currently overloaded with laundry or are in a bind. Please try again later.',
+          onTryAgain: () {
+            _isShowingServerErrorScreen = false;
+            if (context.mounted) Navigator.pop(context); // Error screen band karo
+            _fetchInitialData(); // Wapas API hit karke check karo
+          },
+        ),
+      ),
+    ).then((_) {
+      // Agar user mobile ka back button dabata hai
+      _isShowingServerErrorScreen = false;
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    notificationTimer?.cancel();
+    _pageController.dispose();
+    _searchController.dispose();
+    _connectivitySubscription.cancel(); // 👈 NAYA: Memory leak se bachne ke liye
+    super.dispose();
   }
 
   void loadUserName() async {
-    // 300ms wait karo taaki agar navigation se aaye ho toh storage update ho chuki ho
     await Future.delayed(const Duration(milliseconds: 300));
-
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
       setState(() {
         String? name = prefs.getString("user_name");
         userName = (name != null && name.isNotEmpty) ? name : "Customer";
       });
-      print("Home Screen loaded name: $userName");
     }
   }
 
@@ -83,17 +203,26 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
 
   Future<void> loadProfile() async {
     final data = await ApiService.getUserProfile();
+
     if (!mounted) return;
 
+    // Handle expired token or missing data
+    if (data == null) {
+      print("🚨 Profile data is null. Token may have expired. Redirecting to Login...");
 
-    print("PROFILE DATA: $data"); // 👈 debug
+      await ApiService.logout();
 
+      Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const LoginCustomerScreen()),
+            (route) => false,
+      );
+      return;
+    }
+
+    // Update state with valid profile data
     setState(() {
       userProfile = data;
-
-      if (data != null &&
-          data["addresses"] != null &&
-          data["addresses"].isNotEmpty) {
+      if (data["addresses"] != null && data["addresses"].isNotEmpty) {
         city = data["addresses"][0]["city"];
       } else {
         city = "Select Location";
@@ -137,8 +266,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     });
   }
 
-  // exit in home screen
-
   Future<bool> _showExitDialog() async {
     return await showDialog(
       context: context,
@@ -147,16 +274,16 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
         content: const Text("Do you want to opt out of Vastrafix?"),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false), // Nahi niklega
+            onPressed: () => Navigator.of(context).pop(false),
             child: const Text("No", style: TextStyle(color: AppTheme.primaryBlue)),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(true), // Exit ho jayega
+            onPressed: () => Navigator.of(context).pop(true),
             child: const Text("Yes", style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
-    ) ?? false; // Agar bahar click kare toh false return ho
+    ) ?? false;
   }
 
   // ================= HOME CONTENT =================
@@ -169,8 +296,19 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
           child: TextField(
             controller: _searchController,
-            onChanged: (value) => setState(() => _searchQuery = value.toLowerCase()),
-            // 🔹 Text ka color fix karne ke liye
+            onChanged: (value) {
+              setState(() {
+                _searchQuery = value.toLowerCase();
+                if (value.isNotEmpty && selectedCategory == "All") {
+                  selectedCategory = "Steam Iron"; // Aapki main search screen ka naam
+                }
+
+                // Agar user pura clear kar de, toh wapas "All" par aa jaye (Optional)
+                else if (value.isEmpty && selectedCategory == "Steam Iron") {
+                  selectedCategory = "All";
+                }
+              });
+            },
             style: TextStyle(
               color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black,
             ),
@@ -178,14 +316,10 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
               hintText: 'Search "Shirt","T-shirt","Saree"...',
               hintStyle: const TextStyle(color: Colors.grey),
               prefixIcon: const Icon(Icons.search, color: AppTheme.primaryBlue),
-
-              // 🔹 Background Color Logic
               filled: true,
               fillColor: Theme.of(context).brightness == Brightness.dark
-                  ? Colors.black  // Dark mode mein Pure Black
-                  : Colors.grey.shade100, // Light mode mein Light Grey
-
-              // 🔹 Border hatane ya color change karne ke liye
+                  ? Colors.black
+                  : Colors.grey.shade100,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
                 borderSide: BorderSide.none,
@@ -229,8 +363,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
               ? RefreshIndicator(
             onRefresh: () async {
               setState(() {
-                futureCategories = ApiService.getAllCategories();
-                futureBanners = ApiService.getBanners();
+                _fetchInitialData();
               });
             },
             child: SingleChildScrollView(
@@ -273,7 +406,12 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
                   padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
-                    child: Image.network(banners[index].image, fit: BoxFit.cover),
+                    child: Image.network(banners[index].image, fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        // Agar image load na ho toh (Server Down/Net Issue)
+                        return Container(color: Colors.grey.shade300, child: const Icon(Icons.broken_image));
+                      },
+                    ),
                   ),
                 ),
               ),
@@ -456,20 +594,18 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     ];
 
     return PopScope(
-      canPop: false, // Default back action ko block karega
+      canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return; // Agar pehle hi pop ho chuka hai toh kuch na karein
+        if (didPop) return;
 
-        // 🔥 Logic: Agar user 'Home' tab par nahi hai, toh pehle Home par le jao
         if (selectedIndex != 0) {
           setState(() => selectedIndex = 0);
           return;
         }
 
-        // Agar Home tab par hi hai, toh exit dialog dikhao
         final shouldExit = await _showExitDialog();
         if (shouldExit && context.mounted) {
-          SystemNavigator.pop(); // App ko safely close karega
+          SystemNavigator.pop();
         }
       },
       child: Scaffold(
@@ -489,10 +625,10 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
           const Text("VastraFix", style: TextStyle(color: AppTheme.primaryBlue, fontSize: 14, fontWeight: FontWeight.bold)),
           Text(
             city,
-            style: TextStyle( // 👈 'const' hata diya kyunki value ab badal sakti hai
+            style: TextStyle(
               color: Theme.of(context).brightness == Brightness.dark
-                  ? Colors.white          // ✅ Agar Dark theme hai toh White
-                  : AppTheme.navyDark,      // ✅ Agar Light theme hai toh NavyDark
+                  ? Colors.white
+                  : AppTheme.navyDark,
               fontSize: 22,
               fontWeight: FontWeight.w900,
             ),
@@ -506,7 +642,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
             IconButton(
               icon: const Icon(Icons.notifications_none_outlined, size: 28),
               onPressed: () async {
-                // 🔥 NAYA: Notification Click Logic from File 1
                 setState(() => notificationCount = 0);
                 await ApiService.markNotificationsRead();
                 if (mounted) {
@@ -530,7 +665,6 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
         ),
         const SizedBox(width: 8),
         GestureDetector(
-          // 🔥 NAYA: AppBar profile icon seedha ProfileScreen tab khulega (From File 1)
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const ProfileScreen())),
           child: CircleAvatar(
             backgroundColor: AppTheme.primaryBlue.withOpacity(0.1),
@@ -552,7 +686,7 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
       type: BottomNavigationBarType.fixed,
       onTap: (index) async {
         setState(() => selectedIndex = index);
-        if (index == 0 || index == 3) await loadProfile(); // Home aur Profile pe aate hi refresh
+        if (index == 0 || index == 3) await loadProfile();
       },
       items: const [
         BottomNavigationBarItem(icon: Icon(Icons.home_filled), label: "Home"),
@@ -563,23 +697,13 @@ class _UserHomeScreenState extends State<UserHomeScreen> {
     );
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    notificationTimer?.cancel();
-    _pageController.dispose();
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  // UserHomeScreen.dart ke andar add karein
   void resetToAll() {
     if (mounted) {
       setState(() {
         selectedCategory = "All";
         _searchQuery = "";
         _searchController.clear();
-        selectedIndex = 0; // Home tab par bhi reset kar dega
+        selectedIndex = 0;
       });
     }
   }
