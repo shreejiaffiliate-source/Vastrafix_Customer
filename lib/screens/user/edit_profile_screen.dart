@@ -25,7 +25,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool isSaving = false;
 
   // Base URL for profile images
-  final String baseUrl = "https://www.vastrafix.shreejifintech.com/";
+  final String baseUrl = "https://www.vastrafix.shreejifintech.com";
+  //final String baseUrl = "http://192.168.1.12:8000";
 
   @override
   void initState() {

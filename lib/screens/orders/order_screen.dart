@@ -94,10 +94,13 @@ class _OrderScreenState extends State<OrderScreen> {
 
   // 🔹 API Calling Method
   Future<void> _placeOrderAPI(String paymentMode, {String? paymentId}) async {
+    final userProfile = await ApiService.getUserProfile();
+    String? phone = userProfile?['phone'];
     final createdOrder = await ApiService.placeOrder(
       widget.selectedItems,
       widget.selectedAddress.id ?? 0,
       widget.pickupDateTimeString,
+      phone,
       widget.deliveryModeTitle,
       widget.deliveryCharge,
       paymentMode,
@@ -365,15 +368,121 @@ class _OrderScreenState extends State<OrderScreen> {
     );
   }
 
+  // 1. Pehle ye function add karo Dialog dikhane ke liye
+  void _showPhoneInputDialog(Map<String, dynamic> profile) {
+    final TextEditingController phoneController = TextEditingController();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog( // 👈 Dialog ka apna context use karein
+        backgroundColor: isDark ? AppTheme.navyDark : Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text("Mobile Number Required",
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("Partner needs your number to contact you for pickup.",
+                style: TextStyle(color: AppTheme.greyText, fontSize: 14)),
+            const SizedBox(height: 20),
+            TextField(
+              controller: phoneController,
+              keyboardType: TextInputType.phone,
+              maxLength: 10,
+              style: TextStyle(color: isDark ? Colors.white : AppTheme.navyDark),
+              decoration: InputDecoration(
+                hintText: "Enter 10 digit number",
+                prefixIcon: const Icon(Icons.phone, color: AppTheme.primaryBlue),
+                filled: true,
+                fillColor: isDark ? Colors.white10 : Colors.grey.shade100,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none),
+                counterText: "",
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () {
+                setState(() => isLoading = false);
+                Navigator.pop(dialogContext);
+              },
+              child: const Text("Cancel", style: TextStyle(color: AppTheme.greyText))),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryBlue,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+            onPressed: () async {
+              String phone = phoneController.text.trim();
+              if (phone.length == 10) {
+                // 1. Pehle Dialog band karo
+                Navigator.pop(dialogContext);
+
+                setState(() => isLoading = true);
+
+                // 2. Profile Update API
+                bool updated = await ApiService.updateProfile(
+                  username: profile['username'] ?? "User",
+                  email: profile['email'] ?? "",
+                  phone: phone,
+                );
+
+                // 🔥 CRITICAL FIX: Check karo kya widget abhi bhi screen par hai
+                if (!mounted) return;
+
+                if (updated) {
+                  _proceedToFinalOrder();
+                } else {
+                  setState(() => isLoading = false);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Failed to update phone. Check if number is unique.")));
+                }
+              } else {
+                // Dialog ke andar SnackBar dikhane ke liye context check
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Please enter valid 10 digits")));
+              }
+            },
+            child: const Text("Save & Continue", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+// 2. Apne '_handlePlaceOrder' ko isse replace karo
   void _handlePlaceOrder() async {
     HapticFeedback.heavyImpact();
     setState(() => isLoading = true);
 
+    // 🔎 Check karo kya user ka phone number profile mein hai?
+    final userProfile = await ApiService.getUserProfile();
+
+    if (userProfile == null ||
+        userProfile['phone'] == null ||
+        userProfile['phone'].toString().isEmpty ||
+        userProfile['phone'] == "null") {
+
+      // Agar number nahi hai toh Dialog dikhao
+      if (mounted) _showPhoneInputDialog(userProfile ?? {});
+    } else {
+      // Agar number pehle se hai toh seedha aage badho
+      _proceedToFinalOrder();
+    }
+  }
+
+// 3. Payment aur Order processing ka alag function
+  void _proceedToFinalOrder() async {
     if (_selectedPaymentMethod == "COD") {
       await _placeOrderAPI("COD");
     } else {
       final orderData = await ApiService.createRazorpayOrder(widget.finalAmount);
       if (orderData != null && orderData.containsKey('order_id')) {
+        // ... aapka pura Razorpay options wala code yahan aayega ...
         var options = {
           'key': 'rzp_test_SOCWZ8L1q01O7W',
           'amount': orderData['amount'],

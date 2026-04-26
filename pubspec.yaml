@@ -62,6 +62,9 @@ dependencies:
   http_parser: any
 
   connectivity_plus: ^6.0.3
+  pinput: ^6.0.2
+  rename_app: ^1.6.5
+  geolocator: ^14.0.2
 
 dev_dependencies:
   flutter_test:

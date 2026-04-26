@@ -10,7 +10,7 @@ import 'package:http_parser/http_parser.dart'; // Mime type ke liye
 
 class ApiService {
   static const String baseUrl = "https://www.vastrafix.shreejifintech.com/api/";
-
+  //static const String baseUrl = "http://192.168.1.12:8000/api/";
 
   // ================= CUSTOMER LOGIN =================
   static Future<Map<String, dynamic>> login(String input, String password) async {
@@ -249,6 +249,7 @@ class ApiService {
       List<CartItem> items,
       int addressId,
       String pickupDateTime,
+      String? phone,
       String deliveryMode,   // 👈 Naya parameter add kiya hai
       double deliveryCharge, // 👈 Naya parameter add kiya hai
       String paymentMode,
@@ -265,6 +266,7 @@ class ApiService {
     final body = {
       "address_id": addressId,
       "pickup_datetime": pickupDateTime,
+      "phone": phone, // 👈 Serializer ab ise accept karega
       "delivery_mode": deliveryMode,      // 👈 Backend ko bhejne ke liye
       "delivery_charge": deliveryCharge,  // 👈 Backend ko bhejne ke liye
       "payment_mode": paymentMode,
@@ -354,9 +356,10 @@ class ApiService {
 
     request.headers['Authorization'] = 'Bearer $token';
 
-    request.fields['username'] = username;
-    request.fields['email'] = email;
-    request.fields['phone'] = phone;
+    // ApiService.dart mein updateProfile ke andar:
+    if (username != null && username.isNotEmpty) request.fields['username'] = username;
+    if (email != null && email.isNotEmpty) request.fields['email'] = email;
+    if (phone != null && phone.isNotEmpty) request.fields['phone'] = phone;
 
     if (image != null) {
       request.files.add(
@@ -881,16 +884,24 @@ class ApiService {
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "email": email,
-          "otp": otp, // Django 6-digit OTP expect kar raha hai
+          "otp": otp,
         }),
       );
 
       final data = jsonDecode(response.body);
 
-      if (response.statusCode == 200) {
-        return {"success": true, "message": data["message"]};
+      // ✅ FIX: 200 aur 201 dono ko success mano
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return {
+          "success": true,
+          "message": data["message"] ?? "Success"
+        };
       } else {
-        return {"success": false, "error": data["error"] ?? "Invalid OTP"};
+        // Agar status 400 ya kuch aur hai
+        return {
+          "success": false,
+          "error": data["error"] ?? "Invalid OTP"
+        };
       }
     } catch (e) {
       return {"success": false, "error": "Connection failed"};

@@ -66,6 +66,7 @@ class _SignupScreenState extends State<SignupScreen> {
 
     setState(() => isLoading = true);
 
+    // handleSignup function ke andar:
     try {
       final result = await ApiService.signup(
         username: formattedUsername,
@@ -77,8 +78,7 @@ class _SignupScreenState extends State<SignupScreen> {
 
       setState(() => isLoading = false);
 
-      // 🔥 CHECK LOGIC: Django aksar error mein email ya phone key bhejta hai
-      if (result.containsKey('id') || result.containsKey('message')) {
+      if (result['success'] == true || result.containsKey('id')) {
         _showMessage("Registration successful! Verify your email.", isError: false);
         if (mounted) {
           Navigator.push(
@@ -86,24 +86,28 @@ class _SignupScreenState extends State<SignupScreen> {
             MaterialPageRoute(builder: (_) => EmailOTPVerificationScreen(email: email)),
           );
         }
-      }
-      // 🚨 AGAR EMAIL ALREADY HAI: Django bhejega {"email": ["user with this email already exists."]}
-      else if (result.containsKey('email')) {
-        _showMessage("This email is already registered. Please login.");
-      }
-      else if (result.containsKey('username')) {
-        _showMessage("Username already taken. Try another.");
-      }
-      else if (result.containsKey('phone')) {
-        _showMessage("Phone number already in use.");
-      }
-      else {
-        // Backup error message
-        _showMessage(result['error'] ?? "Registration failed. Please try again.");
+      } else {
+        // 🔥 IMPROVED ERROR HANDLING
+        String errorMsg = "Signup failed. Please try again.";
+
+        // Django hamesha errors field-wise bhejta hai
+        if (result.containsKey('email')) {
+          errorMsg = result['email'][0]; // "This email is already registered..."
+        } else if (result.containsKey('phone')) {
+          errorMsg = result['phone'][0]; // "This phone number is already registered..."
+        } else if (result.containsKey('username')) {
+          errorMsg = result['username'][0];
+        } else if (result.containsKey('error')) {
+          errorMsg = result['error'];
+        } else if (result.containsKey('non_field_errors')) {
+          errorMsg = result['non_field_errors'][0];
+        }
+
+        _showMessage(errorMsg);
       }
     } catch (e) {
       setState(() => isLoading = false);
-      _showMessage("Server Connection Error");
+      _showMessage("Connection error. Check your server.");
     }
   }
 

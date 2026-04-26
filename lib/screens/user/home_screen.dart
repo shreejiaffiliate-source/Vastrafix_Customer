@@ -27,7 +27,9 @@ class UserHomeScreen extends StatefulWidget {
 }
 
 class _UserHomeScreenState extends State<UserHomeScreen> {
-  final String baseUrl = "https://www.vastrafix.shreejifintech.com/";
+  final String baseUrl = "https://www.vastrafix.shreejifintech.com";
+  //final String baseUrl = "http://192.168.1.12:8000";
+
   Timer? notificationTimer;
   Map<String, dynamic>? userProfile;
   int notificationCount = 0;

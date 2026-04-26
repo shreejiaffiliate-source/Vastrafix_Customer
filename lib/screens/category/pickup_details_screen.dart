@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../../models/cart_item_model.dart';
 import '../../models/address_model.dart';
@@ -25,9 +26,12 @@ class PickupDetailsScreen extends StatefulWidget {
 }
 
 class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
+  // 🔥 CHANGE: House number missing hone par error dikhane ke liye variable
+  String? houseError;
+
   DateTime selectedDate = DateTime.now();
   String? selectedSlot;
-  double minimumOrderAmount = 100.0; // 🔥 Fix: 100 set kiya
+  double minimumOrderAmount = 100.0;
 
   String selectedDeliveryMode = "";
   List<dynamic> deliveryOptions = [];
@@ -70,6 +74,8 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
     ]);
     _handleAutomaticDateSelection();
   }
+
+  // ... (Baki ke purane functions same rahenge: _handleAutomaticDateSelection, _fetchDeliveryConfigs, dispose, _initData, _fetchAddresses)
 
   void _handleAutomaticDateSelection() {
     if (pickupSlots.isEmpty) return;
@@ -154,10 +160,110 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
     setState(() => isLoadingAddress = false);
   }
 
+  // 🔥 CHANGE: Location permission aur settings handle karne wala logic
+  Future<void> _getCurrentLocation() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      _showSnackBar("Please enable GPS/Location services", Colors.orange);
+      await Geolocator.openLocationSettings();
+      return;
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        _showSnackBar("Location permission denied", Colors.red);
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      _showSnackBar("Permission permanently denied. Open settings.", Colors.red);
+      await Geolocator.openAppSettings();
+      return;
+    }
+
+    _fetchAndFillAddress();
+  }
+
+  // 🔥 CHANGE: Aggressive Address Fetching Logic
+  Future<void> _fetchAndFillAddress() async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator(color: AppTheme.primaryBlue)),
+    );
+
+    try {
+      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      List<Placemark> placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
+
+      if (mounted) Navigator.pop(context);
+
+      if (placemarks.isNotEmpty) {
+        Placemark place = placemarks[0];
+
+        setState(() {
+          String house = "";
+          if (place.name != null && !place.name!.contains('+')) {
+            house = place.name!;
+          } else if (place.subThoroughfare != null && !place.subThoroughfare!.contains('+')) {
+            house = place.subThoroughfare!;
+          }
+
+          String street = "";
+          if (place.thoroughfare != null && place.thoroughfare!.isNotEmpty && !place.thoroughfare!.contains('+')) {
+            street = place.thoroughfare!;
+          } else if (place.subLocality != null) {
+            street = place.subLocality!;
+          }
+
+          _houseNoController.text = house;
+          _streetController.text = street;
+          _areaController.text = place.subLocality ?? "";
+          _cityController.text = place.locality ?? "";
+          _stateController.text = place.administrativeArea ?? "";
+          _pincodeController.text = place.postalCode ?? "";
+
+          // 🔥 CHANGE: Agar house number nahi mila toh error set karo
+          if(house.isEmpty) {
+            houseError = "Please enter House/Flat number manually";
+          } else {
+            houseError = null;
+          }
+        });
+
+        // 🔥 CHANGE: Floating SnackBar jo sheet ke piche nahi dabega
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_houseNoController.text.isEmpty
+                ? "📍 Location found! Please enter House No. manually."
+                : "Address auto-filled! ✅"),
+            backgroundColor: _houseNoController.text.isEmpty ? Colors.orange.shade800 : AppTheme.freshGreen,
+            behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.only(bottom: MediaQuery.of(context).size.height * 0.45, left: 20, right: 20),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      _showSnackBar("Failed to get location. Try manual entry.", Colors.red);
+    }
+  }
+
+  // 🔥 CHANGE: Validation logic update kiya
   Future<void> _saveOrUpdateAddress(bool isBottomSheet, {AddressModel? addressToEdit}) async {
-    // 🔥 FIX 1: State ka validation bhi add kiya
-    if (_houseNoController.text.trim().isEmpty || _pincodeController.text.trim().isEmpty || _stateController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Required fields missing (Check State/Pincode)")));
+    if (_houseNoController.text.trim().isEmpty) {
+      setState(() => houseError = "House number is required!");
+      return;
+    }
+
+    if (_pincodeController.text.trim().isEmpty || _stateController.text.trim().isEmpty) {
+      _showSnackBar("Required fields missing", Colors.red);
       return;
     }
 
@@ -167,7 +273,6 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
     try {
       List<Location> locations = await locationFromAddress(fullAddress);
       if (locations.isNotEmpty) {
-        // 🔥 FIX 2: Decimal places ko 6 tak limit kiya (toStringAsFixed(6) use karke)
         lat = double.parse(locations.first.latitude.toStringAsFixed(6));
         lng = double.parse(locations.first.longitude.toStringAsFixed(6));
       }
@@ -178,7 +283,7 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
       "street": _streetController.text.trim(),
       "area": _areaController.text.trim(),
       "city": _cityController.text.trim(),
-      "state": _stateController.text.trim(), // Ye ab UI se aayega
+      "state": _stateController.text.trim(),
       "pincode": _pincodeController.text.trim(),
       "latitude": lat,
       "longitude": lng,
@@ -208,7 +313,10 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
   void _clearControllers() {
     _houseNoController.clear(); _streetController.clear(); _areaController.clear();
     _cityController.clear(); _stateController.clear(); _pincodeController.clear();
+    setState(() => houseError = null); // 🔥 CHANGE: Error clear karo
   }
+
+  // ... (Baki ke UI functions same rahenge: _getDeliveryCharge, _getCombinedDateTime, build, _buildSectionHeader, _buildLocationCard, _buildSpeedOptions, _buildDateSlider, _buildTimeGrid, _buildBottomBar, _handleConfirm, _showSnackBar, _showNotAvailableDialog, _showAddressSelection)
 
   double _getDeliveryCharge() {
     if (widget.itemTotal < 100) return 40.0;
@@ -343,8 +451,8 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
                     style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : AppTheme.navyDark)),
                 Text("${savedAddress!.area}, ${savedAddress!.city} - ${savedAddress!.pincode}",
                     style: TextStyle(color: isDark ? Colors.white70 : AppTheme.greyText,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500)),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500)),
               ],
             ),
           ),
@@ -573,12 +681,10 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
     }
   }
 
-// Helper for Snackbar
   void _showSnackBar(String msg, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
   }
 
-  // Helper for Not Available Dialog
   void _showNotAvailableDialog(String message) {
     showDialog(
       context: context,
@@ -588,7 +694,6 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
         return AlertDialog(
           backgroundColor: isDark ? AppTheme.navyDark : Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          // 🔹 Title mein icon add kiya
           title: Row(
             children: [
               Text(
@@ -650,7 +755,6 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
                       _showAddressFormBottomSheet(addressToEdit: addr);
                     }),
                     onTap: () async {
-                      // 🔥 Master Fix: Instant Selection
                       SharedPreferences prefs = await SharedPreferences.getInstance();
                       await prefs.setString('saved_address_id', addr.id.toString());
                       setState(() {
@@ -671,6 +775,7 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
     );
   }
 
+  // 🔥 CHANGE: Bottom Sheet aur TextField Logic
   void _showAddressFormBottomSheet({AddressModel? addressToEdit}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     if (addressToEdit != null) {
@@ -688,38 +793,58 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
       isScrollControlled: true,
       backgroundColor: isDark ? AppTheme.navyDark : Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (context) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 24, right: 24, top: 24),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(addressToEdit == null ? "Address Details" : "Edit Address", style: TextStyle(color: isDark ? Colors.white : AppTheme.navyDark, fontWeight: FontWeight.bold, fontSize: 18)),
-              const SizedBox(height: 20),
-              _buildTextField(_houseNoController, "House No", isDark),
-              _buildTextField(_streetController, "Street", isDark),
-              _buildTextField(_areaController, "Area", isDark),
-              Row(
-                children: [
-                  Expanded(child: _buildTextField(_cityController, "City", isDark)),
-                  const SizedBox(width: 10),
-                  // 🔥 NAYA: State ka field add kar diya
-                  Expanded(child: _buildTextField(_stateController, "State", isDark)),
-                ],
-              ),
-              // Pincode ko ab alag line mein rakh diya
-              _buildTextField(_pincodeController, "Pincode", isDark, isNumber: true),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity, height: 52,
-                child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                    onPressed: () => _saveOrUpdateAddress(true, addressToEdit: addressToEdit),
-                    child: const Text("Save Address", style: TextStyle(fontWeight: FontWeight.bold))
+      builder: (context) => StatefulBuilder( // 🔥 CHANGE: Dialog ke andar state update ke liye
+        builder: (context, setModalState) => Padding(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 24, right: 24, top: 24),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(addressToEdit == null ? "Address Details" : "Edit Address", style: TextStyle(color: isDark ? Colors.white : AppTheme.navyDark, fontWeight: FontWeight.bold, fontSize: 18)),
+                const SizedBox(height: 15),
+                OutlinedButton.icon(
+                  onPressed: _getCurrentLocation,
+                  icon: const Icon(Icons.my_location, size: 18, color: AppTheme.primaryBlue),
+                  label: const Text("Use My Current Location", style: TextStyle(fontWeight: FontWeight.bold)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.primaryBlue,
+                    side: const BorderSide(color: AppTheme.primaryBlue),
+                    minimumSize: const Size(double.infinity, 45),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 20),
-            ],
+
+                const SizedBox(height: 20),
+                // 🔥 CHANGE: House No with ErrorText
+                _buildTextField(_houseNoController, "House No", isDark,
+                    errorText: houseError,
+                    onChanged: (val) {
+                      if (val.isNotEmpty) setState(() => houseError = null);
+                      setModalState(() {}); // Modal ka UI update
+                    }
+                ),
+                _buildTextField(_streetController, "Street", isDark),
+                _buildTextField(_areaController, "Area", isDark),
+                Row(
+                  children: [
+                    Expanded(child: _buildTextField(_cityController, "City", isDark)),
+                    const SizedBox(width: 10),
+                    Expanded(child: _buildTextField(_stateController, "State", isDark)),
+                  ],
+                ),
+                _buildTextField(_pincodeController, "Pincode", isDark, isNumber: true),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity, height: 52,
+                  child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryBlue, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                      onPressed: () => _saveOrUpdateAddress(true, addressToEdit: addressToEdit),
+                      child: const Text("Save Address", style: TextStyle(fontWeight: FontWeight.bold))
+                  ),
+                ),
+                const SizedBox(height: 20),
+              ],
+            ),
           ),
         ),
       ),
@@ -738,14 +863,21 @@ class _PickupDetailsScreenState extends State<PickupDetailsScreen> {
     );
   }
 
-  Widget _buildTextField(TextEditingController controller, String label, bool isDark, {bool isNumber = false}) {
+  // 🔥 CHANGE: TextField Upgrade kiya parameters ke sath
+  Widget _buildTextField(TextEditingController controller, String label, bool isDark,
+      {bool isNumber = false, String? errorText, Function(String)? onChanged}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
-        controller: controller, keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+        controller: controller,
+        onChanged: onChanged,
+        keyboardType: isNumber ? TextInputType.number : TextInputType.text,
         style: TextStyle(color: isDark ? Colors.white : AppTheme.navyDark),
         decoration: InputDecoration(
-          labelText: label, labelStyle: const TextStyle(color: AppTheme.greyText), filled: true,
+          labelText: label,
+          errorText: errorText, // 🔥 CHANGE: Red message dikhayega
+          labelStyle: const TextStyle(color: AppTheme.greyText),
+          filled: true,
           fillColor: isDark ? Colors.white.withOpacity(0.05) : AppTheme.scaffoldBg,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
         ),

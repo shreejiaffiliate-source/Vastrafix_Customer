@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/api_services.dart';
 import '../../core/theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:async'; // Top par add karo
 
 
 class OrderDetailScreen extends StatefulWidget {
@@ -21,16 +22,30 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   late Map<String, dynamic> order;
   bool isLoading = false; // 🔥 NAYA: Loading spinner ke liye variable
 
+  Timer? _timer;
+
   @override
   void initState() {
     super.initState();
     order = widget.order;
 
-    // 🔥 SMART CHECK: Agar "order_items" nahi hai, matlab ye sirf ID hai!
-    if (order["order_items"] == null) {
-      isLoading = true; // Spinner on karo
-      _fetchDataFromId(); // Data fetch karo
+    // 🔥 Har 10 second mein refresh karo agar shipping status hai
+    if (order["status"]?.toLowerCase() == "shipping") {
+      _timer = Timer.periodic(const Duration(seconds: 10), (timer) {
+        if (mounted) _refreshOrder();
+      });
     }
+
+    if (order["order_items"] == null) {
+      isLoading = true;
+      _fetchDataFromId();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel(); // 🔥 Timer band karna mat bhulna memory leak se bachne ke liye
+    super.dispose();
   }
 
   // image upload for complaint
@@ -470,6 +485,56 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 30),
+                // 🔥 NAYA: DELIVERY OTP CARD (Zomato/Blinkit Style)
+                if (status == "shipping" || status == "delivered")
+                  Container(
+                    margin: const EdgeInsets.symmetric(vertical: 16),
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [AppTheme.primaryBlue.withOpacity(0.1), AppTheme.primaryBlue.withOpacity(0.05)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: AppTheme.primaryBlue.withOpacity(0.2)),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.verified_user_outlined, color: AppTheme.primaryBlue, size: 20),
+                            const SizedBox(width: 8),
+                            Text(
+                              status == "delivered" ? "Order Verified" : "Delivery OTP",
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryBlue, letterSpacing: 0.5),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        // OTP Text
+                        Text(
+                          order["delivery_otp"]?.toString() ?? "----", // 🔥 Backend se aaya hua OTP
+                          style: TextStyle(
+                            fontSize: 36,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 10,
+                            color: isDark ? Colors.white : AppTheme.navyDark,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          status == "delivered"
+                              ? "This order was successfully verified."
+                              : "Share this code with the partner only when you receive your clothes.",
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 11, color: AppTheme.greyText, height: 1.4),
+                        ),
+                      ],
+                    ),
+                  ),
                 const SizedBox(height: 30),
 
                 // 4. ACTIONS (Cancel Logic: Sirf Accepted/Pending mein)

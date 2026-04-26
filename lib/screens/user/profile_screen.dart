@@ -1,7 +1,7 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
-
+import 'package:geolocator/geolocator.dart'; // 👈 Ye add kar dena
 import '../auth/login_screen.dart';
 import '../orders/order_history_screen.dart';
 import '../user/support_screen.dart';
@@ -18,7 +18,9 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final String baseUrl = "https://www.vastrafix.shreejifintech.com/";
+  final String baseUrl = "https://www.vastrafix.shreejifintech.com";
+  //final String baseUrl = "http://192.168.1.12:8000";
+
   Map<String, dynamic>? userProfile;
   bool isLoading = true;
 
@@ -65,6 +67,76 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
   }
 
+  // 🔥 NAYA: Location permissions aur GPS status handle karne ke liye
+  Future<void> _getCurrentLocation() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please enable GPS/Location services")));
+      await Geolocator.openLocationSettings();
+      return;
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Location permission denied")));
+        return;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      await Geolocator.openAppSettings();
+      return;
+    }
+
+    _fetchAndFillAddress();
+  }
+
+// 🔥 NAYA: Lat/Long se Address nikal kar Controllers mein bharne ke liye
+  Future<void> _fetchAndFillAddress() async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator(color: AppTheme.primaryBlue)),
+    );
+
+    try {
+      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      List<Placemark> placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
+
+      if (mounted) Navigator.pop(context); // Loader band karo
+
+      if (placemarks.isNotEmpty) {
+        Placemark place = placemarks[0];
+        setState(() {
+          // Plus Code check (Ajeeb codes na aayein isliye)
+          String house = (place.name != null && !place.name!.contains('+')) ? place.name! : "";
+          String street = (place.thoroughfare != null && !place.thoroughfare!.contains('+'))
+              ? place.thoroughfare!
+              : (place.subLocality ?? "");
+
+          _houseNoController.text = house;
+          _streetController.text = street;
+          _areaController.text = place.subLocality ?? "";
+          _cityController.text = place.locality ?? "";
+          _stateController.text = place.administrativeArea ?? "";
+          _pincodeController.text = place.postalCode ?? "";
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Location auto-filled! ✅"), backgroundColor: AppTheme.freshGreen, behavior: SnackBarBehavior.floating),
+        );
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to get location")));
+    }
+  }
+
   // 🔥 Geocoding Logic from File 1
   Future<Map<String, double?>> _getLatLong() async {
     double? lat; double? lng;
@@ -97,6 +169,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Saving location details...")));
     final coords = await _getLatLong();
 
+    // 🔥 FIX: Latitude aur Longitude ko 6 decimal places tak limit karo
+    double? finalLat = coords['lat'] != null
+        ? double.parse(coords['lat']!.toStringAsFixed(6))
+        : null;
+    double? finalLng = coords['lng'] != null
+        ? double.parse(coords['lng']!.toStringAsFixed(6))
+        : null;
+
     final data = {
       "house_no": _houseNoController.text.trim(),
       "street": _streetController.text.trim(),
@@ -104,8 +184,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       "city": _cityController.text.trim(),
       "state": _stateController.text.trim(),
       "pincode": _pincodeController.text.trim(),
-      "latitude": coords['lat'],
-      "longitude": coords['lng'],
+      "latitude": finalLat, // Ab ye hamesha 6 digits max bhejega
+      "longitude": finalLng, // Ab ye hamesha 6 digits max bhejega
     };
 
     try {
@@ -398,7 +478,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   );
                 }
               },
-              child: const Text("Yes, Logout"),
+              child: const Text("Yes"),
             ),
           ],
         );
@@ -488,6 +568,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(isEditing ? "Edit Address" : "New Address", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: isDark ? Colors.white : AppTheme.navyDark)),
+              const SizedBox(height: 15),
+
+// 🔥 NAYA BUTTON: Use Current Location
+              OutlinedButton.icon(
+                onPressed: _getCurrentLocation,
+                icon: const Icon(Icons.my_location, size: 18, color: AppTheme.primaryBlue),
+                label: const Text("Use My Current Location", style: TextStyle(fontWeight: FontWeight.bold)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.primaryBlue,
+                  side: const BorderSide(color: AppTheme.primaryBlue),
+                  minimumSize: const Size(double.infinity, 45),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+
               const SizedBox(height: 20),
               // 🔥 Sahi Sequence: House -> Street -> Area
               _buildFormTextField(_houseNoController, "House/Flat No", isDark),
